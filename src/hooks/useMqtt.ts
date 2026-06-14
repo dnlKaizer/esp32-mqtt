@@ -1,40 +1,46 @@
-import mqtt from "mqtt";
-import { MQTT } from "../config/mqtt";
-import { useEffect, useState } from "react";
-
-type GroupKey = typeof MQTT.TOPICS[number];
+import { useEffect, useState } from 'react';
+import { mqttService } from '../services/mqtt.service';
+import type { TrashView } from '../types/trash.type';
+import { formatTrashMessage } from '../utils/trash.util';
 
 export function useMqtt() {
-    const [trash, setTrash] = useState({
-        grupo1: 0,
-        grupo2: 0,
-        grupo3: 0
-    });
+    const [trash, setTrash] = useState<TrashView[]>([]);
+
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        const client = mqtt.connect(MQTT.BROKER_URL);
+        setLoading(true);
+        mqttService.connect(
+            () => {
+                setLoading(false);
+                setError(null);
+            },
+            (err) => {
+                setError(err.message);
+                setLoading(false);
+            }
+        );
 
-        client.on('connect', () => {
-            console.log('Conectado ao Broker!');
-            client.subscribe(MQTT.TOPICS.map(grupo => MQTT.TOPIC_PREFIX + grupo));
-        });
-
-        client.on('message', (topic, message) => {
-            const value = message.toString();
-            const segment = topic.split('/').pop();
-
-            if (segment && MQTT.TOPICS.includes(segment as GroupKey)) {
-                const grupo = segment as GroupKey;
-
-                setTrash(prev => ({
-                    ...prev,
-                    [grupo]: value
-                }));
+        mqttService.onMessage((topic, message) => {
+            const view = formatTrashMessage(topic, message);
+            if (view) {
+                setTrash(prev => {
+                    const exists = prev.some(t => t.group === view.group);
+                    if (exists) {
+                        return prev.map(t => t.group === view.group ? view : t);
+                    }
+                    return [...prev, view].sort((a, b) => a.group.localeCompare(b.group));
+                });
+            } else {
+                console.warn(`Mensagem ${topic} não pode ser formatada.`);
             }
         });
 
-        return () => { client.end(); };
+        return () => {
+            mqttService.disconnect();
+        };
     }, []);
 
-    return { trash };
+    return { trash, loading, error };
 }
